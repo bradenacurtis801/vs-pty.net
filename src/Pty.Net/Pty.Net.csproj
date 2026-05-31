@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>bradenacurtis801.Pty.Net</PackageId>
+    <Version>1.0.1</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,7 +30,40 @@
     </ProjectReference>
   </ItemGroup>
 
-  <Target Name="CollectNugetFiles" BeforeTargets="_GetPackageFiles">
+  <Target Name="BuildNativeShim" BeforeTargets="AssignTargetPaths"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <PropertyGroup>
+      <_NativeSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../Pty.Net.Native'))</_NativeSourceDir>
+      <_ProcessArch>$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)</_ProcessArch>
+      <_NativeArch Condition="'$(_ProcessArch)' == 'Arm64'">arm64</_NativeArch>
+      <_NativeArch Condition="'$(_ProcessArch)' == 'X64'">x64</_NativeArch>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('OSX'))">osx-$(_NativeArch)</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Linux'))">linux-$(_NativeArch)</_NativeRid>
+      <_NativeLibExt Condition="$([MSBuild]::IsOSPlatform('OSX'))">dylib</_NativeLibExt>
+      <_NativeLibExt Condition="$([MSBuild]::IsOSPlatform('Linux'))">so</_NativeLibExt>
+      <_NativeBuildDir>$(BaseIntermediateOutputPath)native/$(_NativeRid)</_NativeBuildDir>
+      <_NativeLibFile>$(_NativeBuildDir)/bin/libpty_net.$(_NativeLibExt)</_NativeLibFile>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(_NativeBuildDir)" />
+
+    <Exec Command="cmake -DCMAKE_BUILD_TYPE=Release &quot;$(_NativeSourceDir)&quot;"
+          WorkingDirectory="$(_NativeBuildDir)"
+          Condition="!Exists('$(_NativeBuildDir)/CMakeCache.txt')" />
+
+    <Exec Command="cmake --build . --config Release"
+          WorkingDirectory="$(_NativeBuildDir)" />
+
+    <ItemGroup>
+      <Content Include="$(_NativeLibFile)" CopyToOutputDirectory="PreserveNewest">
+        <Link>libpty_net.$(_NativeLibExt)</Link>
+      </Content>
+      <None Include="$(_NativeLibFile)" Pack="true" PackagePath="runtimes/$(_NativeRid)/native/" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="CollectNugetFiles" BeforeTargets="_GetPackageFiles"
+          Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
       <OutputPtyFiles Include="$(RepoRootPath)\bin\winpty\**\*" />
       
