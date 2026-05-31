@@ -1,9 +1,8 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Pty.Net.Mac
 {
-    using System.Diagnostics;
     using static Pty.Net.Mac.NativeMethods;
 
     /// <summary>
@@ -22,22 +21,21 @@ namespace Pty.Net.Mac
         }
 
         /// <inheritdoc/>
-        protected override bool Kill(int fd)
+        protected override bool Kill(int controller)
         {
-            return ioctl(fd, TIOCSIG, SIGHUP) != -1;
+            return Unix.PtyShim.pty_kill(this.Pid, SIGHUP) != -1;
         }
 
         /// <inheritdoc/>
         protected override bool Resize(int fd, int cols, int rows)
         {
-            var size = new WinSize((ushort)rows, (ushort)cols);
-            return ioctl(fd, TIOCSWINSZ, ref size) != -1;
+            return Unix.PtyShim.pty_resize(fd, (ushort)rows, (ushort)cols) != -1;
         }
 
         /// <inheritdoc/>
         protected override bool WaitPid(int pid, ref int status)
         {
-            return waitpid(pid, ref status, 0) != -1;
+            return Unix.PtyShim.pty_waitpid(pid, ref status, 0) != -1;
         }
     }
 }

@@ -1,12 +1,10 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Pty.Net.Mac
 {
     using System;
-    using System.Collections.Generic;
     using System.Diagnostics;
-    using System.Runtime.InteropServices;
     using System.Threading;
     using System.Threading.Tasks;
     using static Pty.Net.Mac.NativeMethods;
@@ -19,60 +17,54 @@ namespace Pty.Net.Mac
         /// <inheritdoc/>
         public override Task<IPtyConnection> StartTerminalAsync(PtyOptions options, TraceSource trace, CancellationToken cancellationToken)
         {
-            var winSize = new WinSize((ushort)options.Rows, (ushort)options.Cols);
-
-            string?[] terminalArgs = GetExecvpArgs(options);
-
-            var controlCharacters = new Dictionary<TermSpecialControlCharacter, sbyte>
+            var winSize = new Unix.PtyShim.PtyWinSize
             {
-                { TermSpecialControlCharacter.VEOF, 4 },
-                { TermSpecialControlCharacter.VEOL, -1 },
-                { TermSpecialControlCharacter.VEOL2, -1 },
-                { TermSpecialControlCharacter.VERASE, 0x7f },
-                { TermSpecialControlCharacter.VWERASE, 23 },
-                { TermSpecialControlCharacter.VKILL, 21 },
-                { TermSpecialControlCharacter.VREPRINT, 18 },
-                { TermSpecialControlCharacter.VINTR, 3 },
-                { TermSpecialControlCharacter.VQUIT, 0x1c },
-                { TermSpecialControlCharacter.VSUSP, 26 },
-                { TermSpecialControlCharacter.VSTART, 17 },
-                { TermSpecialControlCharacter.VSTOP, 19 },
-                { TermSpecialControlCharacter.VLNEXT, 22 },
-                { TermSpecialControlCharacter.VDISCARD, 15 },
-                { TermSpecialControlCharacter.VMIN, 1 },
-                { TermSpecialControlCharacter.VTIME, 0 },
-                { TermSpecialControlCharacter.VDSUSP, 25 },
-                { TermSpecialControlCharacter.VSTATUS, 20 },
+                Rows = (ushort)options.Rows,
+                Cols = (ushort)options.Cols,
             };
 
-            var term = new Termios(
-                inputFlag: TermInputFlag.ICRNL | TermInputFlag.IXON | TermInputFlag.IXANY | TermInputFlag.IMAXBEL | TermInputFlag.BRKINT | TermInputFlag.IUTF8,
-                outputFlag: TermOuptutFlag.OPOST | TermOuptutFlag.ONLCR,
-                controlFlag: TermConrolFlag.CREAD | TermConrolFlag.CS8 | TermConrolFlag.HUPCL,
-                localFlag: TermLocalFlag.ICANON | TermLocalFlag.ISIG | TermLocalFlag.IEXTEN | TermLocalFlag.ECHO | TermLocalFlag.ECHOE | TermLocalFlag.ECHOK | TermLocalFlag.ECHOKE | TermLocalFlag.ECHOCTL,
-                speed: TermSpeed.B38400,
-                controlCharacters: controlCharacters);
+            string?[] argv = GetExecvpArgs(options);
+            string?[]? envp = GetEnvp(options.Environment);
 
-            int controller = 0;
-            int pid = forkpty(ref controller, null, ref term, ref winSize);
+            var cc = new byte[32];
+            cc[(int)TermSpecialControlCharacter.VEOF] = 4;
+            cc[(int)TermSpecialControlCharacter.VEOL] = unchecked((byte)(sbyte)-1);
+            cc[(int)TermSpecialControlCharacter.VEOL2] = unchecked((byte)(sbyte)-1);
+            cc[(int)TermSpecialControlCharacter.VERASE] = 0x7f;
+            cc[(int)TermSpecialControlCharacter.VWERASE] = 23;
+            cc[(int)TermSpecialControlCharacter.VKILL] = 21;
+            cc[(int)TermSpecialControlCharacter.VREPRINT] = 18;
+            cc[(int)TermSpecialControlCharacter.VINTR] = 3;
+            cc[(int)TermSpecialControlCharacter.VQUIT] = 0x1c;
+            cc[(int)TermSpecialControlCharacter.VSUSP] = 26;
+            cc[(int)TermSpecialControlCharacter.VSTART] = 17;
+            cc[(int)TermSpecialControlCharacter.VSTOP] = 19;
+            cc[(int)TermSpecialControlCharacter.VLNEXT] = 22;
+            cc[(int)TermSpecialControlCharacter.VDISCARD] = 15;
+            cc[(int)TermSpecialControlCharacter.VMIN] = 1;
+            cc[(int)TermSpecialControlCharacter.VTIME] = 0;
+            cc[(int)TermSpecialControlCharacter.VDSUSP] = 25;
+            cc[(int)TermSpecialControlCharacter.VSTATUS] = 20;
 
-            if (pid == -1)
+            var termios = new Unix.PtyShim.PtyTermios
             {
-                throw new InvalidOperationException($"forkpty(4) failed with error {Marshal.GetLastWin32Error()}");
+                IFlag = (uint)(TermInputFlag.ICRNL | TermInputFlag.IXON | TermInputFlag.IXANY | TermInputFlag.IMAXBEL | TermInputFlag.BRKINT | TermInputFlag.IUTF8),
+                OFlag = (uint)(TermOuptutFlag.OPOST | TermOuptutFlag.ONLCR),
+                CFlag = (uint)(TermConrolFlag.CREAD | TermConrolFlag.CS8 | TermConrolFlag.HUPCL),
+                LFlag = (uint)(TermLocalFlag.ICANON | TermLocalFlag.ISIG | TermLocalFlag.IEXTEN | TermLocalFlag.ECHO | TermLocalFlag.ECHOE | TermLocalFlag.ECHOK | TermLocalFlag.ECHOKE | TermLocalFlag.ECHOCTL),
+                CC = cc,
+                ISpeed = (uint)TermSpeed.B38400,
+                OSpeed = (uint)TermSpeed.B38400,
+            };
+
+            var result = Unix.PtyShim.pty_spawn(options.App, argv, envp, options.Cwd, ref termios, ref winSize);
+
+            if (result.Pid == -1)
+            {
+                throw new InvalidOperationException($"pty_spawn failed with error {result.Error}");
             }
 
-            if (pid == 0)
-            {
-                // We are in a forked process! See http://man7.org/linux/man-pages/man2/fork.2.html for details.
-                // Only our thread is running. We inherited open file descriptors and get a copy of the parent process memory.
-                Environment.CurrentDirectory = options.Cwd;
-                execvpe(options.App, terminalArgs, options.Environment);
-
-                // Unreachable code after execvpe()
-            }
-
-            // We have forked the terminal
-            return Task.FromResult<IPtyConnection>(new PtyConnection(controller, pid));
+            return Task.FromResult<IPtyConnection>(new PtyConnection(result.MasterFd, result.Pid));
         }
     }
 }

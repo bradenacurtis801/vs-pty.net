@@ -35,5 +35,25 @@ namespace Pty.Net.Unix
             result[0] = options.App;
             return result;
         }
+
+        /// <summary>
+        /// Converts an environment dictionary to a null-terminated "KEY=VALUE" string array for pty_spawn.
+        /// </summary>
+        protected static string?[]? GetEnvp(IDictionary<string, string>? environment)
+        {
+            if (environment == null || environment.Count == 0)
+            {
+                return null;
+            }
+
+            var result = new string?[environment.Count + 1];
+            int i = 0;
+            foreach (var kvp in environment)
+            {
+                result[i++] = $"{kvp.Key}={kvp.Value}";
+            }
+
+            return result;
+        }
     }
 }

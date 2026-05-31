@@ -27,15 +27,37 @@ namespace Pty.Net.Windows
 
         internal static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
-        private static readonly Lazy<bool> IsPseudoConsoleSupportedLazy = new Lazy<bool>(
-            () =>
-            {
-                IntPtr hLibrary = LoadLibraryW("kernel32.dll");
-                return hLibrary != IntPtr.Zero && GetProcAddress(hLibrary, "CreatePseudoConsole") != IntPtr.Zero;
-            },
-            isThreadSafe: true);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate int CreatePseudoConsoleProc(Coord coord, IntPtr hInput, IntPtr hOutput, uint dwFlags, out IntPtr phPC);
 
-        internal static bool IsPseudoConsoleSupported => IsPseudoConsoleSupportedLazy.Value;
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate int ResizePseudoConsoleProc(IntPtr hPC, Coord size);
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate void ClosePseudoConsoleProc(IntPtr hPC);
+
+        private static readonly Lazy<(CreatePseudoConsoleProc? Create, ResizePseudoConsoleProc? Resize, ClosePseudoConsoleProc? Close)> Kernel32ConPtyFuncs =
+            new Lazy<(CreatePseudoConsoleProc?, ResizePseudoConsoleProc?, ClosePseudoConsoleProc?)>(
+                () =>
+                {
+                    IntPtr hLib = LoadLibraryW("kernel32.dll");
+                    if (hLib == IntPtr.Zero)
+                    {
+                        return default;
+                    }
+
+                    IntPtr createPtr = GetProcAddress(hLib, "CreatePseudoConsole");
+                    IntPtr resizePtr = GetProcAddress(hLib, "ResizePseudoConsole");
+                    IntPtr closePtr = GetProcAddress(hLib, "ClosePseudoConsole");
+
+                    return (
+                        createPtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<CreatePseudoConsoleProc>(createPtr) : null,
+                        resizePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ResizePseudoConsoleProc>(resizePtr) : null,
+                        closePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ClosePseudoConsoleProc>(closePtr) : null);
+                },
+                isThreadSafe: true);
+
+        internal static bool IsPseudoConsoleSupported => Kernel32ConPtyFuncs.Value.Create != null;
 
         [DllImport("kernel32.dll")]
         public static extern int GetProcessId(SafeProcessHandle hProcess);
@@ -78,6 +100,12 @@ namespace Pty.Net.Windows
 
         internal static int CreatePseudoConsole(Coord coord, IntPtr input, IntPtr output, uint flags, out IntPtr consoleHandle)
         {
+            var funcs = Kernel32ConPtyFuncs.Value;
+            if (funcs.Create != null)
+            {
+                return funcs.Create(coord, input, output, flags, out consoleHandle);
+            }
+
             if (Environment.Is64BitOperatingSystem)
             {
                 return CreatePseudoConsole64(coord, input, output, flags, out consoleHandle);
@@ -90,6 +118,12 @@ namespace Pty.Net.Windows
 
         internal static int ResizePseudoConsole(SafePseudoConsoleHandle consoleHandle, Coord coord)
         {
+            var funcs = Kernel32ConPtyFuncs.Value;
+            if (funcs.Resize != null)
+            {
+                return funcs.Resize(consoleHandle.Handle, coord);
+            }
+
             if (Environment.Is64BitOperatingSystem)
             {
                 return ResizePseudoConsole64(consoleHandle, coord);
@@ -102,6 +136,13 @@ namespace Pty.Net.Windows
 
         internal static void ClosePseudoConsole(IntPtr consoleHandle)
         {
+            var funcs = Kernel32ConPtyFuncs.Value;
+            if (funcs.Close != null)
+            {
+                funcs.Close(consoleHandle);
+                return;
+            }
+
             if (Environment.Is64BitOperatingSystem)
             {
                 ClosePseudoConsole64(consoleHandle);
