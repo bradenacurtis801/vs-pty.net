@@ -4,6 +4,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <PackageId>bradenacurtis801.Pty.Net</PackageId>
     <Version>1.0.1</Version>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,14 +23,23 @@
       <Pack>true</Pack>
       <PackagePath>build\</PackagePath>
     </None>
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+
+    <!-- Pre-built native libraries staged by CI or a prior local build -->
+    <None Include="../Pty.Net.Native/output/runtimes/osx-arm64/native/libpty_net.dylib"
+          Pack="true" PackagePath="runtimes/osx-arm64/native/"
+          Condition="Exists('../Pty.Net.Native/output/runtimes/osx-arm64/native/libpty_net.dylib')" />
+    <None Include="../Pty.Net.Native/output/runtimes/osx-x64/native/libpty_net.dylib"
+          Pack="true" PackagePath="runtimes/osx-x64/native/"
+          Condition="Exists('../Pty.Net.Native/output/runtimes/osx-x64/native/libpty_net.dylib')" />
+    <None Include="../Pty.Net.Native/output/runtimes/linux-x64/native/libpty_net.so"
+          Pack="true" PackagePath="runtimes/linux-x64/native/"
+          Condition="Exists('../Pty.Net.Native/output/runtimes/linux-x64/native/libpty_net.so')" />
+    <None Include="../Pty.Net.Native/output/runtimes/linux-arm64/native/libpty_net.so"
+          Pack="true" PackagePath="runtimes/linux-arm64/native/"
+          Condition="Exists('../Pty.Net.Native/output/runtimes/linux-arm64/native/libpty_net.so')" />
   </ItemGroup>
   
-  <ItemGroup>
-    <ProjectReference Include="..\OSS.Sign\OSS.Sign.csproj">
-      <PrivateAssets>all</PrivateAssets>
-    </ProjectReference>
-  </ItemGroup>
-
   <Target Name="BuildNativeShim" BeforeTargets="AssignTargetPaths"
           Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
     <PropertyGroup>
@@ -43,9 +53,10 @@
       <_NativeLibExt Condition="$([MSBuild]::IsOSPlatform('Linux'))">so</_NativeLibExt>
       <_NativeBuildDir>$(BaseIntermediateOutputPath)native/$(_NativeRid)</_NativeBuildDir>
       <_NativeLibFile>$(_NativeBuildDir)/bin/libpty_net.$(_NativeLibExt)</_NativeLibFile>
+      <_NativeStagedDir>$(_NativeSourceDir)/output/runtimes/$(_NativeRid)/native</_NativeStagedDir>
     </PropertyGroup>
 
-    <MakeDir Directories="$(_NativeBuildDir)" />
+    <MakeDir Directories="$(_NativeBuildDir);$(_NativeStagedDir)" />
 
     <Exec Command="cmake -DCMAKE_BUILD_TYPE=Release &quot;$(_NativeSourceDir)&quot;"
           WorkingDirectory="$(_NativeBuildDir)"
@@ -54,11 +65,13 @@
     <Exec Command="cmake --build . --config Release"
           WorkingDirectory="$(_NativeBuildDir)" />
 
+    <!-- Stage into output/runtimes/ so the static None Pack items above find it -->
+    <Copy SourceFiles="$(_NativeLibFile)" DestinationFolder="$(_NativeStagedDir)" />
+
     <ItemGroup>
       <Content Include="$(_NativeLibFile)" CopyToOutputDirectory="PreserveNewest">
         <Link>libpty_net.$(_NativeLibExt)</Link>
       </Content>
-      <None Include="$(_NativeLibFile)" Pack="true" PackagePath="runtimes/$(_NativeRid)/native/" />
     </ItemGroup>
   </Target>
 
@@ -67,41 +80,49 @@
     <ItemGroup>
       <OutputPtyFiles Include="$(RepoRootPath)\bin\winpty\**\*" />
       
-      <None Include="@(OutputPtyFiles)">
+      <None Include="@(OutputPtyFiles)" Condition="'@(OutputPtyFiles)' != ''">
         <Pack>true</Pack>
         <PackagePath>build\</PackagePath>
       </None>
 
-      <None Include="$(RepoRootPath)\bin\conpty\x86\conpty.dll">
+      <None Include="$(RepoRootPath)\bin\conpty\x86\conpty.dll"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x86\conpty.dll')">
         <Pack>true</Pack>
         <PackagePath>build\x86\os86</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x86\conpty.dll">
+      <None Include="$(RepoRootPath)\bin\conpty\x86\conpty.dll"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x86\conpty.dll')">
         <Pack>true</Pack>
         <PackagePath>build\x86\os64</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe">
+      <None Include="$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe')">
         <Pack>true</Pack>
         <PackagePath>build\x86\os86</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe">
+      <None Include="$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe')">
         <Pack>true</Pack>
         <PackagePath>build\x86\os64</PackagePath>
       </None>
 
-      <None Include="$(RepoRootPath)\bin\conpty\x64\conpty.dll">
+      <None Include="$(RepoRootPath)\bin\conpty\x64\conpty.dll"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x64\conpty.dll')">
         <Pack>true</Pack>
         <PackagePath>build\x64\os86</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x64\conpty.dll">
+      <None Include="$(RepoRootPath)\bin\conpty\x64\conpty.dll"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x64\conpty.dll')">
         <Pack>true</Pack>
         <PackagePath>build\x64\os64</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe">
+      <None Include="$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x86\OpenConsole.exe')">
         <Pack>true</Pack>
         <PackagePath>build\x64\os86</PackagePath>
       </None>
-      <None Include="$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe">
+      <None Include="$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe"
+            Condition="Exists('$(RepoRootPath)\bin\conpty\x64\OpenConsole.exe')">
         <Pack>true</Pack>
         <PackagePath>build\x64\os64</PackagePath>
       </None>
