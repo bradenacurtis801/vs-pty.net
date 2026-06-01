@@ -1,0 +1,160 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-native-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal macOS library
+        run: |
+          set -e
+          SRC="src/Pty.Net.Native"
+          BUILD="$SRC/build/osx-universal"
+          mkdir -p "$BUILD"
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+                -S "$SRC" -B "$BUILD"
+          cmake --build "$BUILD" --config Release
+          for rid in osx-arm64 osx-x64; do
+            mkdir -p "$SRC/output/runtimes/$rid/native"
+            cp "$BUILD/bin/libpty_net.dylib" "$SRC/output/runtimes/$rid/native/"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-osx-arm64
+          path: src/Pty.Net.Native/output/runtimes/osx-arm64/native/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-osx-x64
+          path: src/Pty.Net.Native/output/runtimes/osx-x64/native/
+
+  build-native-linux:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cmake
+        run: sudo apt-get install -y cmake
+
+      - name: Build native library
+        run: |
+          set -e
+          SRC="src/Pty.Net.Native"
+          BUILD="$SRC/build/${{ matrix.rid }}"
+          OUT="$SRC/output/runtimes/${{ matrix.rid }}/native"
+          mkdir -p "$BUILD" "$OUT"
+          cmake -DCMAKE_BUILD_TYPE=Release -S "$SRC" -B "$BUILD"
+          cmake --build "$BUILD" --config Release
+          cp "$BUILD"/bin/libpty_net.* "$OUT/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.rid }}
+          path: src/Pty.Net.Native/output/runtimes/${{ matrix.rid }}/native/
+
+  pack-and-publish:
+    needs: [build-native-macos, build-native-linux]
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Build WinPTY
+        shell: cmd
+        run: |
+          cd dep\winpty
+          vcbuild.bat --msvc-platform Win32 --toolset v143 --gyp-msvs-version 2022
+          vcbuild.bat --msvc-platform x64   --toolset v143 --gyp-msvs-version 2022
+
+      - name: Build ConPTY
+        shell: cmd
+        run: |
+          msbuild dep\terminal\OpenConsole.sln /t:Conhost\winconpty_DLL;Conhost\Host_EXE /p:Platform=Win32 /p:Configuration=Release /m
+          msbuild dep\terminal\OpenConsole.sln /t:Conhost\winconpty_DLL;Conhost\Host_EXE /p:Platform=x64   /p:Configuration=Release /m
+
+      - name: Stage Windows binaries
+        shell: bash
+        run: |
+          # WinPTY — needed both for CopyToOutputDirectory and NuGet pack
+          mkdir -p bin/winpty
+          cp dep/winpty/src/Release/x64/winpty*.{dll,exe} bin/winpty/ 2>/dev/null || true
+          cp dep/winpty/src/Release/ia32/winpty*.{dll,exe} bin/winpty/ 2>/dev/null || true
+
+          # ConPTY — NuGet pack paths match CollectNugetFiles in the csproj
+          mkdir -p bin/conpty/x86 bin/conpty/x64
+          cp dep/terminal/bin/Win32/Release/conpty.dll      bin/conpty/x86/
+          cp dep/terminal/bin/Win32/Release/OpenConsole.exe bin/conpty/x86/
+          cp dep/terminal/bin/x64/Release/conpty.dll        bin/conpty/x64/
+          cp dep/terminal/bin/x64/Release/OpenConsole.exe   bin/conpty/x64/
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-downloads/
+
+      - name: Stage Unix native libraries
+        shell: bash
+        run: |
+          for dir in native-downloads/native-*/; do
+            rid="${dir#native-downloads/native-}"
+            rid="${rid%/}"
+            dest="src/Pty.Net.Native/output/runtimes/$rid/native"
+            mkdir -p "$dest"
+            cp "$dir"* "$dest/"
+          done
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack
+        shell: bash
+        run: |
+          EXTRA=""
+          if [[ -n "${{ steps.version.outputs.version }}" ]]; then
+            EXTRA="-p:Version=${{ steps.version.outputs.version }}"
+          fi
+          dotnet pack src/Pty.Net/Pty.Net.csproj -c Release $EXTRA
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $nupkg = Get-ChildItem bin/Packages/Release/NuGet/bradenacurtis801.Pty.Net.*.nupkg | Select-Object -First 1
+          Write-Host "Publishing: $($nupkg.FullName)"
+          dotnet nuget push $nupkg.FullName `
+            --api-key ${{ secrets.NUGET_KEY }} `
+            --source https://api.nuget.org/v3/index.json `
+            --skip-duplicate
