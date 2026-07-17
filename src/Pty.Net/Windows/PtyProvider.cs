@@ -306,6 +306,38 @@ namespace Pty.Net.Windows
             return new WinPtyConnection(readFromStream, writeToStream, handle, hProcess);
         }
 
+        /// <summary>
+        /// Reads CreatePseudoConsole flags from the PTYNET_CONPTY_FLAGS environment
+        /// variable (decimal or 0x-prefixed hex; invalid or unset yields 0). Used as
+        /// a fallback when <see cref="PtyOptions.PseudoConsoleFlags"/> is 0, so
+        /// deployments can toggle e.g. PSEUDOCONSOLE_RESIZE_QUIRK (0x2) at runtime
+        /// without an API change.
+        /// </summary>
+        private static uint GetEnvironmentConPtyFlags()
+        {
+            string? raw = Environment.GetEnvironmentVariable("PTYNET_CONPTY_FLAGS");
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return 0;
+            }
+
+            raw = raw!.Trim();
+            try
+            {
+                return raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                    ? Convert.ToUInt32(raw.Substring(2), 16)
+                    : uint.Parse(raw, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (FormatException)
+            {
+                return 0;
+            }
+            catch (OverflowException)
+            {
+                return 0;
+            }
+        }
+
         private Task<IPtyConnection> StartPseudoConsoleAsync(
            PtyOptions options,
            TraceSource trace,
@@ -324,6 +356,7 @@ namespace Pty.Net.Windows
 
             var coord = new Coord(options.Cols, options.Rows);
             var pseudoConsoleHandle = new SafePseudoConsoleHandle();
+            uint conPtyFlags = options.PseudoConsoleFlags != 0 ? options.PseudoConsoleFlags : GetEnvironmentConPtyFlags();
             int hr;
             RuntimeHelpers.PrepareConstrainedRegions();
             try
@@ -335,7 +368,7 @@ namespace Pty.Net.Windows
             finally
             {
                 // Create the Pseudo Console, using the pipes
-                hr = CreatePseudoConsole(coord, inPipePseudoConsoleSide.Handle, outPipePseudoConsoleSide.Handle, 0, out IntPtr hPC);
+                hr = CreatePseudoConsole(coord, inPipePseudoConsoleSide.Handle, outPipePseudoConsoleSide.Handle, conPtyFlags, out IntPtr hPC);
 
                 // Remember the handle inside the CER to prevent leakage
                 if (hPC != IntPtr.Zero && hPC != INVALID_HANDLE_VALUE)

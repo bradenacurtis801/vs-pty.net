@@ -40,22 +40,59 @@ namespace Pty.Net.Windows
             new Lazy<(CreatePseudoConsoleProc?, ResizePseudoConsoleProc?, ClosePseudoConsoleProc?)>(
                 () =>
                 {
-                    IntPtr hLib = LoadLibraryW("kernel32.dll");
-                    if (hLib == IntPtr.Zero)
+                    // Opt-in: prefer the conpty.dll bundled next to the assembly
+                    // (os64/os86, built from microsoft/terminal, OpenConsole.exe
+                    // beside it) over the OS conhost — set PTYNET_BUNDLED_CONPTY=1.
+                    // A bundled host gives identical ConPTY behavior on every
+                    // Windows build instead of whatever conhost the machine ships.
+                    if (Environment.GetEnvironmentVariable("PTYNET_BUNDLED_CONPTY") == "1")
                     {
-                        return default;
+                        var bundled = TryLoadConPtyFrom(GetBundledConPtyPath());
+                        if (bundled.Create != null)
+                        {
+                            return bundled;
+                        }
                     }
 
-                    IntPtr createPtr = GetProcAddress(hLib, "CreatePseudoConsole");
-                    IntPtr resizePtr = GetProcAddress(hLib, "ResizePseudoConsole");
-                    IntPtr closePtr = GetProcAddress(hLib, "ClosePseudoConsole");
-
-                    return (
-                        createPtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<CreatePseudoConsoleProc>(createPtr) : null,
-                        resizePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ResizePseudoConsoleProc>(resizePtr) : null,
-                        closePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ClosePseudoConsoleProc>(closePtr) : null);
+                    return TryLoadConPtyFrom("kernel32.dll");
                 },
                 isThreadSafe: true);
+
+        private static string? GetBundledConPtyPath()
+        {
+            string baseDir = AppContext.BaseDirectory;
+            if (string.IsNullOrEmpty(baseDir))
+            {
+                return null;
+            }
+
+            string arch = Environment.Is64BitProcess ? "os64" : "os86";
+            string path = System.IO.Path.Combine(baseDir, arch, "conpty.dll");
+            return System.IO.File.Exists(path) ? path : null;
+        }
+
+        private static (CreatePseudoConsoleProc? Create, ResizePseudoConsoleProc? Resize, ClosePseudoConsoleProc? Close) TryLoadConPtyFrom(string? libraryPath)
+        {
+            if (libraryPath == null)
+            {
+                return default;
+            }
+
+            IntPtr hLib = LoadLibraryW(libraryPath);
+            if (hLib == IntPtr.Zero)
+            {
+                return default;
+            }
+
+            IntPtr createPtr = GetProcAddress(hLib, "CreatePseudoConsole");
+            IntPtr resizePtr = GetProcAddress(hLib, "ResizePseudoConsole");
+            IntPtr closePtr = GetProcAddress(hLib, "ClosePseudoConsole");
+
+            return (
+                createPtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<CreatePseudoConsoleProc>(createPtr) : null,
+                resizePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ResizePseudoConsoleProc>(resizePtr) : null,
+                closePtr != IntPtr.Zero ? Marshal.GetDelegateForFunctionPointer<ClosePseudoConsoleProc>(closePtr) : null);
+        }
 
         internal static bool IsPseudoConsoleSupported => Kernel32ConPtyFuncs.Value.Create != null;
 

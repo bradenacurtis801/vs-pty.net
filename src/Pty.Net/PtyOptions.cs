@@ -54,6 +54,18 @@ namespace Pty.Net
         public bool ForceWinPty { get; set; }
 
         /// <summary>
+        /// Gets or sets extra flags passed to CreatePseudoConsole on Windows.
+        /// Known values: 0x1 PSEUDOCONSOLE_INHERIT_CURSOR (documented),
+        /// 0x2 PSEUDOCONSOLE_RESIZE_QUIRK (undocumented: tells conhost the
+        /// attached terminal reflows its own buffer, so it should not repaint the
+        /// screen on resize). When 0 (the default), the PTYNET_CONPTY_FLAGS
+        /// environment variable (decimal or 0x-prefixed hex) is used as a
+        /// fallback, so deployments can experiment at runtime without an API
+        /// change. Ignored by the WinPty and Unix backends.
+        /// </summary>
+        public uint PseudoConsoleFlags { get; set; }
+
+        /// <summary>
         /// Gets or sets the process' environment variables.
         /// </summary>
         public IDictionary<string, string> Environment { get; set; } = new Dictionary<string, string>();
